@@ -1,0 +1,5 @@
+{
+    "OpenAI": "https://status.openai.com/history.atom",
+    "GitHub": "https://www.githubstatus.com/history.atom",
+    "Tailscale": "https://status.tailscale.com/history.atom"
+}
