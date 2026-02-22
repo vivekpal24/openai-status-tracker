@@ -8,6 +8,7 @@ import time
 import logging
 from typing import Dict, Any, Callable, List
 from dotenv import load_dotenv
+from aiohttp import web
 
 # Load environment variables
 load_dotenv()
@@ -34,6 +35,9 @@ class EventDrivenStatusTracker:
         self.sources_file: str = sources_file
         self.state: Dict[str, str] = self._load_json(self.state_file)
         self.sources: Dict[str, str] = self._load_json(self.sources_file)
+        
+        # Keep track of recent messages for the web view
+        self.recent_logs: List[str] = []
         
         # Event listeners that trigger when a new incident is detected
         self.event_listeners: List[Callable] = [self.handle_new_incident]
@@ -115,9 +119,15 @@ class EventDrivenStatusTracker:
         # Replace newlines with spaces for single-line output
         description_clean = " ".join(description_clean.splitlines())
 
-        print(f"[{timestamp}] Product: {product} - {title}\nStatus: {description_clean}")
+        output_string = f"[{timestamp}] Product: {product} - {title}\nStatus: {description_clean}"
+        print(output_string)
+        
+        # Add to web logs so reviewers can see it on the URL
+        self.recent_logs.append(output_string)
+        if len(self.recent_logs) > 50:
+            self.recent_logs.pop(0)
 
-    async def run(self):
+    async def fetch_feed_loop(self):
         """Main loop that continuously polls all feeds concurrently."""
         print(f"Starting tracking for {len(self.sources)} sources...")
         print("Listening for incidents... (System logs will be written to error.log)")
@@ -131,6 +141,29 @@ class EventDrivenStatusTracker:
                 if tasks:
                     await asyncio.gather(*tasks)
                 await asyncio.sleep(POLL_INTERVAL)
+
+    async def run(self):
+        """Sets up the web server and the polling loop concurrently."""
+        app = web.Application()
+        app.router.add_get("/", self.web_handler)
+        
+        runner = web.AppRunner(app)
+        await runner.setup()
+        port = int(os.environ.get("PORT", 8080))
+        site = web.TCPSite(runner, '0.0.0.0', port)
+        await site.start()
+        print(f"Web server running on port {port}")
+        
+        await self.fetch_feed_loop()
+
+    async def web_handler(self, request):
+        """Serves the recent logs as plain text when the URL is visited."""
+        if not self.recent_logs:
+            text = "No incidents detected yet.\n(The tracker is actively running in the background...)"
+        else:
+            text = "\n\n".join(reversed(self.recent_logs))
+            
+        return web.Response(text=text, content_type='text/plain')
 
 if __name__ == "__main__":
     tracker = EventDrivenStatusTracker()
